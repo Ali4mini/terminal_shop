@@ -12,6 +12,8 @@ type model struct {
 	coffeeModels []string
 	cursor       int
 	selected     map[int]struct{}
+	width        int
+	height       int
 	err          error
 }
 
@@ -49,12 +51,17 @@ func (m model) View() string {
 		}
 
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+	s := lipgloss.JoinVertical(lipgloss.Left, lines...)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, s)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
 	case tea.KeyMsg:
+
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
