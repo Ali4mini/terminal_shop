@@ -1,12 +1,26 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
 	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/ssh"
+	"github.com/charmbracelet/wish"
+	"github.com/charmbracelet/wish/bubbletea"
 )
+
+type productsMsg []string
 
 type model struct {
 	coffeeModels []string
@@ -17,18 +31,37 @@ type model struct {
 	err          error
 }
 
+func fetchProducts() tea.Msg {
+	resp, err := http.Get("http://localhost:9991/products")
+	if err != nil {
+		fmt.Printf("error from 69 chambers, %s", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("had an error reading from body")
+	}
+
+	return productsMsg(strings.Split(string(body), ";"))
+
+}
+
 func initialModel() model {
 	return model{
-		coffeeModels: []string{"arch", "debian", "manjaro"},
+		coffeeModels: []string{},
 		selected:     make(map[int]struct{}),
 	}
 }
 
 func (m model) Init() tea.Cmd {
-	return nil
+	return fetchProducts
 }
 
 func (m model) View() string {
+	if len(m.coffeeModels) == 0 {
+		return "Loading or Server not started..."
+	}
 	var lines []string
 
 	lines = append(lines, headerStyle.Render("hello world"))
@@ -57,6 +90,9 @@ func (m model) View() string {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case productsMsg:
+		m.coffeeModels = msg // Data received!
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -88,12 +124,48 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func main() {
-	_, err := tea.NewProgram(initialModel(), tea.WithAltScreen()).Run()
-
+func startSSHServer() {
+	s, err := wish.NewServer(
+		wish.WithAddress(net.JoinHostPort("localhost", "2222")),
+		wish.WithMiddleware(
+			bubbletea.Middleware(teaHandler),
+		),
+	)
 	if err != nil {
-		fmt.Printf("error while running the TUI")
-
-		os.Exit(1)
+		log.Fatalln("Could not start server", "error", err)
 	}
+	done := make(chan os.Signal, 1)
+	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+
+	log.Printf("Starting SSH server on localhost:2222")
+	go func() {
+		if err = s.ListenAndServe(); err != nil {
+			log.Fatalln(err)
+		}
+	}()
+
+	<-done
+	log.Println("Stopping SSH server...")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := s.Shutdown(ctx); err != nil {
+		log.Fatalln(err)
+	}
+
+}
+
+// teaHandler is the bridge between Wish and Bubble Tea
+func teaHandler(s ssh.Session) (tea.Model, []tea.ProgramOption) {
+	// This function runs every time a new user connects via SSH
+	m := initialModel()
+
+	// We return a new Bubble Tea program for this specific session
+	return m, []tea.ProgramOption{tea.WithAltScreen()}
+}
+
+func main() {
+
+	go StartMockServer()
+	startSSHServer()
+
 }
