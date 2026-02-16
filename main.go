@@ -2,8 +2,9 @@ package main
 
 import (
 	"context"
+	_ "embed"
+	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/abdullahdiaa/garabic"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/ssh"
@@ -20,10 +22,10 @@ import (
 	"github.com/charmbracelet/wish/bubbletea"
 )
 
-type productsMsg []string
+type productsMsg []Product
 
 type model struct {
-	coffeeModels []string
+	coffeeModels []Product
 	cursor       int
 	selected     map[int]struct{}
 	width        int
@@ -34,78 +36,115 @@ type model struct {
 func fetchProducts() tea.Msg {
 	resp, err := http.Get("http://localhost:9991/products")
 	if err != nil {
-		fmt.Printf("error from 69 chambers, %s", err)
+		return productsMsg{} // In a real app, return an error message
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Printf("had an error reading from body")
+	var products []Product
+	if err := json.NewDecoder(resp.Body).Decode(&products); err != nil {
+		return productsMsg{}
 	}
 
-	return productsMsg(strings.Split(string(body), ";"))
-
+	return productsMsg(products)
 }
 
 func initialModel() model {
 	return model{
-		coffeeModels: []string{},
+		coffeeModels: []Product{},
 		selected:     make(map[int]struct{}),
 	}
 }
 
+func FixPersian(input string) string {
+	text := garabic.Shape(input)
+
+	return text
+
+}
+
+//go:embed persian_welcome.txt
+var welcomeText string
+
+func (m model) headerView() string {
+
+	return titleStyle.Render(welcomeText)
+}
 func (m model) Init() tea.Cmd {
 	return fetchProducts
 }
 
 func (m model) View() string {
 	if len(m.coffeeModels) == 0 {
-		return "Loading or Server not started..."
+		return "Waking up the beans..."
 	}
-	var lines []string
 
-	lines = append(lines, headerStyle.Render("hello world"))
-	lines = append(lines, "")
+	// SIDEBAR: Product List
+	var listBuilder strings.Builder
+	listBuilder.WriteString(headerStyle.Render(welcomeText) + "\n\n")
 
-	for i, coffee := range m.coffeeModels {
-		cursor := " "
+	for i, item := range m.coffeeModels {
+		cursor := "  "
+		style := itemStyle // Define this in your styles
+
 		if i == m.cursor {
-			cursor = ">"
+			cursor = "» "
+			style = selectedStyle // Define this in your styles
 		}
 
+		checked := " "
 		if _, ok := m.selected[i]; ok {
-			row := XStyle.Render(fmt.Sprintf("%s [X] %s", cursor, coffee))
-
-			lines = append(lines, row)
-		} else {
-
-			row := productStyle.Render(fmt.Sprintf("%s [ ] %s", cursor, coffee))
-			lines = append(lines, row)
+			checked = "✔"
 		}
 
+		// Show Name and Price in the list
+		line := fmt.Sprintf("%s[%s] %-18s $%2.2f", cursor, checked, item.Name, item.Price)
+		listBuilder.WriteString(style.Render(line) + "\n")
 	}
-	s := lipgloss.JoinVertical(lipgloss.Left, lines...)
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, s)
+
+	// MAIN VIEW: Product Details
+	current := m.coffeeModels[m.cursor]
+
+	// Create a "Card" for the details
+	detailView := lipgloss.JoinVertical(lipgloss.Left,
+		boldAccentStyle.Render(current.Name),
+		dimStyle.Render(current.Origin+" | "+current.Roast+" Roast"),
+		"",
+		current.Description,
+		"",
+		priceTagStyle.Render(fmt.Sprintf("PRICE: $%.2f", current.Price)),
+	)
+
+	// Combine Sidebar and Details
+	mainContent := lipgloss.JoinHorizontal(lipgloss.Top,
+		lipgloss.NewStyle().Width(35).Render(listBuilder.String()),
+		lipgloss.NewStyle().Padding(1, 4).Render(detailView),
+	)
+
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center,
+		mainStyle.Render(mainContent),
+	)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case productsMsg:
-		m.coffeeModels = msg // Data received!
-		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-	case tea.KeyMsg:
+		return m, nil
 
+	case productsMsg:
+		m.coffeeModels = msg
+		return m, nil
+
+	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
-		case "k", "up":
+		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
 			}
-		case "j", "down":
+		case "down", "j":
 			if m.cursor < len(m.coffeeModels)-1 {
 				m.cursor++
 			}
@@ -113,14 +152,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			_, ok := m.selected[m.cursor]
 			if ok {
 				delete(m.selected, m.cursor)
-
 			} else {
 				m.selected[m.cursor] = struct{}{}
 			}
-
 		}
 	}
-
 	return m, nil
 }
 
@@ -154,9 +190,7 @@ func startSSHServer() {
 
 }
 
-// teaHandler is the bridge between Wish and Bubble Tea
 func teaHandler(s ssh.Session) (tea.Model, []tea.ProgramOption) {
-	// This function runs every time a new user connects via SSH
 	m := initialModel()
 
 	// We return a new Bubble Tea program for this specific session

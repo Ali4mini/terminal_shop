@@ -12,6 +12,7 @@ require (
 )
 
 require (
+	github.com/abdullahdiaa/garabic v0.0.0-20230105201152-4c3eb72be29c // indirect
 	github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/charmbracelet/colorprofile v0.4.1 // indirect
