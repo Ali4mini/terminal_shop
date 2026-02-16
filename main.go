@@ -190,7 +190,7 @@ func startSSHServer() {
 
 }
 
-func teaHandler(s ssh.Session) (tea.Model, []tea.ProgramOption) {
+func teaHandler(_ ssh.Session) (tea.Model, []tea.ProgramOption) {
 	m := initialModel()
 
 	// We return a new Bubble Tea program for this specific session
@@ -200,6 +200,17 @@ func teaHandler(s ssh.Session) (tea.Model, []tea.ProgramOption) {
 func main() {
 
 	go StartMockServer()
-	startSSHServer()
+	// running the SSH server only when neede (in prod)
+	if os.Getenv("TUI_NO_SSH_SERVER") == "true" {
+		p := tea.NewProgram(initialModel())
+		if _, err := p.Run(); err != nil {
+			fmt.Printf("Alas, there's been an error: %v", err)
+			os.Exit(1)
+		}
+
+	} else {
+
+		startSSHServer()
+	}
 
 }
